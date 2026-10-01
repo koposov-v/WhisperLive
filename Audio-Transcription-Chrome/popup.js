@@ -3,7 +3,43 @@ document.addEventListener("DOMContentLoaded", function () {
   const startButton = document.getElementById("startCapture");
   const stopButton = document.getElementById("stopCapture");
 
-  const useServerCheckbox = document.getElementById("useServerCheckbox");
+  const serverHost = document.getElementById("serverHost");
+  const serverPort = document.getElementById("serverPort");
+  const mentionEnabled = document.getElementById("mentionEnabled");
+  const mentionSound = document.getElementById("mentionSound");
+  const watchWords = document.getElementById("watchWords");
+  const captureStatus = document.getElementById("captureStatus");
+
+  function showLastMention(mention) {
+    document.getElementById("lastMentionText").textContent = mention ? mention.text : '—';
+    const time = document.getElementById("lastMentionTime");
+    time.textContent = mention ? new Date(mention.timestamp).toLocaleString() : '';
+    time.dateTime = mention ? new Date(mention.timestamp).toISOString() : '';
+  }
+
+  chrome.storage.local.get({ ...Mentions.DEFAULT_SETTINGS, serverHost: 'localhost', serverPort: '9090', lastMention: null }, settings => {
+    mentionEnabled.checked = settings.mentionEnabled;
+    mentionSound.checked = settings.mentionSound;
+    watchWords.value = settings.watchWords.join('\n');
+    serverHost.value = settings.serverHost;
+    serverPort.value = settings.serverPort;
+    showLastMention(settings.lastMention);
+  });
+
+  function saveMentionSettings() {
+    chrome.storage.local.set({
+      mentionEnabled: mentionEnabled.checked,
+      mentionSound: mentionSound.checked,
+      watchWords: Mentions.parseWatchWords(watchWords.value),
+    });
+  }
+
+  mentionEnabled.addEventListener('change', saveMentionSettings);
+  mentionSound.addEventListener('change', saveMentionSettings);
+  watchWords.addEventListener('input', saveMentionSettings);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.lastMention) showLastMention(changes.lastMention.newValue);
+  });
   const useVadCheckbox = document.getElementById("useVadCheckbox");
   const saveCaptionsCheckbox = document.getElementById("saveCaptionsCheckbox");
   const languageDropdown = document.getElementById('languageDropdown');
@@ -29,12 +65,6 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   // Retrieve checkbox state from storage on popup open
-  chrome.storage.local.get("useServerState", ({ useServerState }) => {
-    if (useServerState !== undefined) {
-      useServerCheckbox.checked = useServerState;
-    }
-  });
-
   chrome.storage.local.get("useVadState", ({ useVadState }) => {
     if (useVadState !== undefined) {
       useVadCheckbox.checked = useVadState;
@@ -81,18 +111,17 @@ document.addEventListener("DOMContentLoaded", function () {
     if (startButton.disabled) {
       return;
     }
+    startButton.disabled = true;
+    captureStatus.textContent = '';
 
     // Get the current active tab
     const currentTab = await getCurrentTab();
 
     // Send a message to the background script to start capturing
-    let host = "localhost";
-    let port = "9090";
-    const useCollaboraServer = useServerCheckbox.checked;
-    if (useCollaboraServer){
-      host = "boxerab--aavaaz-live-livetranscriber-web.modal.run"
-      port = ""
-    }
+    const host = serverHost.value.trim() || 'localhost';
+    const port = serverPort.value.trim();
+    saveMentionSettings();
+    chrome.storage.local.set({ serverHost: host, serverPort: port });
 
     chrome.runtime.sendMessage(
       { 
@@ -106,7 +135,12 @@ document.addEventListener("DOMContentLoaded", function () {
         useVad: useVadCheckbox.checked,
         saveCaptions: saveCaptionsCheckbox.checked,
         captionLines: Number(selectedCaptionLines),
-      }, () => {
+      }, (response) => {
+        if (chrome.runtime.lastError || !response || !response.started) {
+          captureStatus.textContent = chrome.runtime.lastError?.message || response?.error || 'Не удалось начать захват аудио.';
+          toggleCaptureButtons(false);
+          return;
+        }
         // Update capturing state in storage and toggle the buttons
         chrome.storage.local.set({ capturingState: { isCapturing: true } }, () => {
           toggleCaptureButtons(true);
@@ -121,6 +155,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (stopButton.disabled) {
       return;
     }
+    stopButton.disabled = true;
 
     // Send a message to the background script to stop capturing
     chrome.runtime.sendMessage(
@@ -148,7 +183,8 @@ document.addEventListener("DOMContentLoaded", function () {
   function toggleCaptureButtons(isCapturing) {
     startButton.disabled = isCapturing;
     stopButton.disabled = !isCapturing;
-    useServerCheckbox.disabled = isCapturing;
+    serverHost.disabled = isCapturing;
+    serverPort.disabled = isCapturing;
     useVadCheckbox.disabled = isCapturing;
     saveCaptionsCheckbox.disabled = isCapturing;
     modelSizeDropdown.disabled = isCapturing;
@@ -160,11 +196,6 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // Save the checkbox state when it's toggled
-  useServerCheckbox.addEventListener("change", () => {
-    const useServerState = useServerCheckbox.checked;
-    chrome.storage.local.set({ useServerState });
-  });
-
   useVadCheckbox.addEventListener("change", () => {
     const useVadState = useVadCheckbox.checked;
     chrome.storage.local.set({ useVadState });
@@ -199,7 +230,7 @@ document.addEventListener("DOMContentLoaded", function () {
     chrome.storage.local.set({ selectedCaptionLines });
   });
 
-  chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "updateSelectedLanguage") {
       const detectedLanguage = request.detectedLanguage;
   
@@ -210,7 +241,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "toggleCaptureButtons") {
       toggleCaptureButtons(false);
       chrome.storage.local.set({ capturingState: { isCapturing: false } })

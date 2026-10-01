@@ -75,6 +75,16 @@ function getLocalStorageValue(key) {
 function sendMessageToTab(tabId, data) {
   return new Promise((resolve) => {
     chrome.tabs.sendMessage(tabId, data, (response) => {
+      if (chrome.runtime.lastError) console.error('Tab message failed:', chrome.runtime.lastError.message);
+      resolve(response);
+    });
+  });
+}
+
+function sendMessageToRecorder(tabId, data) {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ ...data, recorderTabId: tabId }, response => {
+      if (chrome.runtime.lastError) console.error('Recorder message failed:', chrome.runtime.lastError.message);
       resolve(response);
     });
   });
@@ -138,9 +148,10 @@ async function startCapture(options) {
 
   try {
     const currentTab = await getTab(tabId);
-    if (currentTab.audible) {
+    if (currentTab) {
       await setLocalStorageValue("currentTabId", currentTab.id);
       await executeScriptInTab(currentTab.id, "content.js");
+      await sendMessageToTab(currentTab.id, { type: 'reset_transcript', data: {} });
       await delayExecution(500);
 
       const optionTab = await openExtensionOptions();
@@ -148,7 +159,7 @@ async function startCapture(options) {
       await setLocalStorageValue("optionTabId", optionTab.id);
       await delayExecution(500);
 
-      await sendMessageToTab(optionTab.id, {
+      const response = await sendMessageToRecorder(optionTab.id, {
         type: "start_capture",
         data: { 
           currentTabId: currentTab.id, 
@@ -160,13 +171,18 @@ async function startCapture(options) {
           modelSize: options.modelSize,
           useVad: options.useVad,
           saveCaptions: options.saveCaptions,
+          captionLines: options.captionLines,
         },
       });
+      await setLocalStorageValue('capturingState', { isCapturing: !!response?.started });
+      if (!response?.started) await removeChromeTab(optionTab.id);
+      return response;
     } else {
       console.log("No Audio");
     }
   } catch (error) {
     console.error("Error occurred while starting capture:", error);
+    return { started: false, error: error.message };
   }
 }
 
@@ -180,12 +196,16 @@ async function stopCapture(options) {
   const currentTabId = await getLocalStorageValue("currentTabId");
 
   if (optionTabId) {
-    res = await sendMessageToTab(currentTabId, {
+    await sendMessageToRecorder(optionTabId, { type: 'stop_capture', data: {} });
+    await sendMessageToTab(currentTabId, {
       type: "STOP",
       data: { currentTabId: currentTabId, saveCaptions: options.saveCaptions },
     });
     await removeChromeTab(optionTabId);
   }
+  await setLocalStorageValue('capturingState', { isCapturing: false });
+  await setLocalStorageValue('optionTabId', null);
+  await setLocalStorageValue('currentTabId', null);
 }
 
 
@@ -193,11 +213,24 @@ async function stopCapture(options) {
  * Listens for messages from the runtime and performs corresponding actions.
  * @param {Object} message - The message received from the runtime.
  */
-chrome.runtime.onMessage.addListener(async (message) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "startCapture") {
-    startCapture(message);
+    startCapture(message).then(response => sendResponse(response || { started: false }));
+    return true;
   } else if (message.action === "stopCapture") {
-    stopCapture(message);
+    stopCapture(message).then(() => sendResponse({ stopped: true }));
+    return true;
+  } else if (message.action === "mentionDetected" && sender.url === chrome.runtime.getURL('options.html')) {
+    const mention = message.mention;
+    chrome.notifications.create(`mention-${message.sessionId}-${mention.segmentStart}`, {
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icon128.png'),
+      title: 'Тебя упомянули',
+      message: mention.text.slice(0, 300),
+      silent: true,
+    }, () => {
+      if (chrome.runtime.lastError) console.error('Mention notification failed:', chrome.runtime.lastError.message);
+    });
   } else if (message.action === "updateSelectedLanguage") {
     const detectedLanguage = message.detectedLanguage;
     chrome.runtime.sendMessage({ action: "updateSelectedLanguage", detectedLanguage });
@@ -208,5 +241,3 @@ chrome.runtime.onMessage.addListener(async (message) => {
     stopCapture({saveCaptions: message.saveCaptions});
   }
 });
-
-

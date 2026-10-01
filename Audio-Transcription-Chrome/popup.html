@@ -2,19 +2,33 @@
 <html>
 <head>
   <title>Audio Capture</title>
+  <script src="mentions.js"></script>
   <script src="popup.js"></script>
   <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body>
   <div class="header"><img src="./icon128.png"/> <h1>Audio Transcription</h1></div>
   <div class="button-container">
-    <div class="button" id="startCapture">Start Capture</div>
-    <div class="button" id="stopCapture" disabled>Stop Capture</div>
+    <button class="button" id="startCapture">Start Capture</button>
+    <button class="button" id="stopCapture" disabled>Stop Capture</button>
   </div>
+  <p id="captureStatus" role="status" aria-live="polite"></p>
   <div class="checkbox-container">
-    <input type="checkbox" id="useServerCheckbox">
-    <label for="useServerCheckbox">Use Collabora Whisper-Live Server</label>
+    <label for="serverHost">WhisperLive server:</label>
+    <input id="serverHost" value="localhost" placeholder="localhost" required>
+    <label for="serverPort">Port (empty for WSS):</label>
+    <input id="serverPort" value="9090" placeholder="9090" inputmode="numeric">
   </div>
+  <fieldset class="mention-settings">
+    <legend>Упоминания</legend>
+    <label><input type="checkbox" id="mentionEnabled" checked> Детектор упоминаний</label>
+    <label><input type="checkbox" id="mentionSound" checked> Звук уведомлений</label>
+    <label for="watchWords">Слова и имена (по одному на строку или через запятую)</label>
+    <textarea id="watchWords" rows="3">Вячеслав&#10;Слав&#10;Слава</textarea>
+    <small>Hotwords обновляются при следующем Start Capture.</small>
+    <p aria-live="polite">Последнее упоминание: <span id="lastMentionText">—</span><br>
+      <time id="lastMentionTime"></time></p>
+  </fieldset>
   <div class="checkbox-container">
     <input type="checkbox" id="useVadCheckbox">
     <label for="useVadCheckbox">Use Voice Activity Detection</label>

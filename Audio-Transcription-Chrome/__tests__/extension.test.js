@@ -8,6 +8,7 @@ const storageData = {};
 
 global.chrome = {
   storage: {
+    onChanged: { addListener: jest.fn() },
     local: {
       get: jest.fn((keys, cb) => {
         if (typeof keys === 'string') {
@@ -43,7 +44,7 @@ global.chrome = {
     remove: jest.fn(),
     sendMessage: jest.fn(),
   },
-  tabCapture: { capture: jest.fn() },
+  tabCapture: { getMediaStreamId: jest.fn() },
   scripting: { executeScript: jest.fn() },
 };
 
@@ -57,9 +58,15 @@ function resetStorage() {
 
 function buildPopupDOM() {
   document.body.innerHTML = `
-    <div id="startCapture"></div>
-    <div id="stopCapture"></div>
-    <input type="checkbox" id="useServerCheckbox">
+    <button id="startCapture"></button>
+    <button id="stopCapture"></button>
+    <p id="captureStatus"></p>
+    <input id="serverHost" value="localhost">
+    <input id="serverPort" value="9090">
+    <input type="checkbox" id="mentionEnabled">
+    <input type="checkbox" id="mentionSound">
+    <textarea id="watchWords"></textarea>
+    <span id="lastMentionText"></span><time id="lastMentionTime"></time>
     <input type="checkbox" id="useVadCheckbox">
     <input type="checkbox" id="saveCaptionsCheckbox">
     <select id="languageDropdown">
@@ -81,6 +88,7 @@ function buildPopupDOM() {
 
 function loadPopup() {
   jest.resetModules();
+  require('../mentions.js');
   require('../popup.js');
   document.dispatchEvent(new Event('DOMContentLoaded'));
 }
@@ -129,8 +137,7 @@ describe('popup.js host/port selection', () => {
     jest.clearAllMocks();
   });
 
-  test('checkbox unchecked → localhost:9090', async () => {
-    document.getElementById('useServerCheckbox').checked = false;
+  test('default server → localhost:9090', async () => {
     loadPopup();
     clickStart();
     await flushPromises();
@@ -143,8 +150,9 @@ describe('popup.js host/port selection', () => {
     expect(call[0].port).toBe('9090');
   });
 
-  test('checkbox checked → Modal host with empty port', async () => {
-    document.getElementById('useServerCheckbox').checked = true;
+  test('configured server and empty port are forwarded', async () => {
+    storageData.serverHost = 'whisper.example.test';
+    storageData.serverPort = '';
     loadPopup();
     clickStart();
     await flushPromises();
@@ -153,7 +161,7 @@ describe('popup.js host/port selection', () => {
       c => c[0] && c[0].action === 'startCapture'
     );
     expect(call).toBeDefined();
-    expect(call[0].host).toBe('boxerab--aavaaz-live-livetranscriber-web.modal.run');
+    expect(call[0].host).toBe('whisper.example.test');
     expect(call[0].port).toBe('');
   });
 
@@ -222,10 +230,10 @@ describe('popup.js storage restoration', () => {
     jest.clearAllMocks();
   });
 
-  test('restores useServerCheckbox from storage', () => {
-    storageData.useServerState = true;
+  test('restores server host from storage', () => {
+    storageData.serverHost = '192.168.1.10';
     loadPopup();
-    expect(document.getElementById('useServerCheckbox').checked).toBe(true);
+    expect(document.getElementById('serverHost').value).toBe('192.168.1.10');
   });
 
   test('restores language selection from storage', () => {
@@ -238,5 +246,35 @@ describe('popup.js storage restoration', () => {
     storageData.selectedModelSize = 'large-v3';
     loadPopup();
     expect(document.getElementById('modelSizeDropdown').value).toBe('large-v3');
+  });
+});
+
+describe('mention settings in popup', () => {
+  beforeEach(() => {
+    resetStorage();
+    buildPopupDOM();
+    jest.clearAllMocks();
+  });
+
+  test('uses Russian defaults and saves edits immediately', () => {
+    loadPopup();
+    const words = document.getElementById('watchWords');
+    expect(words.value).toBe('Вячеслав\nСлав\nСлава');
+    words.value = 'Серёжа, billing\nСерёжа';
+    words.dispatchEvent(new Event('input'));
+    expect(storageData.watchWords).toEqual(['Серёжа', 'billing']);
+    document.getElementById('mentionSound').checked = false;
+    document.getElementById('mentionSound').dispatchEvent(new Event('change'));
+    expect(storageData.mentionSound).toBe(false);
+  });
+
+  test('restores last mention and updates it while popup is open', () => {
+    storageData.lastMention = { text: 'Слава, посмотри billing', timestamp: 1000 };
+    loadPopup();
+    expect(document.getElementById('lastMentionText').textContent).toBe(storageData.lastMention.text);
+    expect(document.getElementById('lastMentionTime').dateTime).toBe(new Date(1000).toISOString());
+    const listener = chrome.storage.onChanged.addListener.mock.calls.at(-1)[0];
+    listener({ lastMention: { newValue: { text: 'Вячеславу', timestamp: 2000 } } }, 'local');
+    expect(document.getElementById('lastMentionText').textContent).toBe('Вячеславу');
   });
 });

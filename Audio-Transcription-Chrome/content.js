@@ -1,3 +1,7 @@
+(function () {
+if (globalThis.whisperLiveContentLoaded) return;
+globalThis.whisperLiveContentLoaded = true;
+
 var elem_container = null;
 var elem_text = null;
 
@@ -198,6 +202,7 @@ function get_lines(elem, line_height) {
 
 function remove_element() {
     var elem = document.getElementById('transcription')
+    if (!elem) return;
     for (var i = 0; i <= captionLineCount; i++) {
         document.getElementById("t" + i).remove();
     }
@@ -208,6 +213,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const { type, data } = request;
     const saveCaptions = data.saveCaptions;
     const captionLines = data.captionLines || captionLineCount;
+
+    if (type === 'reset_transcript') {
+        allSegments = [];
+        lastIncompleteSegment = null;
+        remove_element();
+        sendResponse({});
+        return;
+    }
 
     if (type === "STOP") {        
         if (saveCaptions === true) {
@@ -315,3 +328,4 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({});
     return true;
 });
+})();

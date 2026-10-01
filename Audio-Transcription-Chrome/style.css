@@ -109,3 +109,19 @@ label {
 .dropdown-container {
   padding: 10px; 
 }
+
+.mention-settings {
+  margin: 10px;
+  padding: 12px;
+}
+
+.mention-settings label, .mention-settings small {
+  display: block;
+  margin-bottom: 8px;
+}
+
+#watchWords {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+}
